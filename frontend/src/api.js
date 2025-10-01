@@ -6,9 +6,11 @@ export async function getHealth() {
   return res.json()
 }
 
-export async function getTopRecommendations(n = 3) {
+export async function getTopRecommendations(n = 3, page = 1, cap = 'all') {
   const url = new URL(`${API_BASE}/recommendations/top`)
   url.searchParams.set('n', n)
+  url.searchParams.set('page', page)
+  url.searchParams.set('cap', cap)
   const res = await fetch(url)
   if (!res.ok) throw new Error('Failed to fetch recommendations')
   return res.json()
