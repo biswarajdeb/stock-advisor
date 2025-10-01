@@ -15,3 +15,12 @@ export async function getTopRecommendations(n = 3, page = 1, cap = 'all') {
   if (!res.ok) throw new Error('Failed to fetch recommendations')
   return res.json()
 }
+
+export async function getOneRecommendation(ticker, exchange = 'NSE') {
+  const url = new URL(`${API_BASE}/recommendations/one`)
+  url.searchParams.set('ticker', ticker)
+  url.searchParams.set('exchange', exchange)
+  const res = await fetch(url)
+  if (!res.ok) throw new Error('Failed to analyze ticker')
+  return res.json()
+}

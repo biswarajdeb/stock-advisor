@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react'
-import { getTopRecommendations, getHealth } from './api'
+import { getTopRecommendations, getHealth, getOneRecommendation } from './api'
 
 export default function App() {
   const [health, setHealth] = useState(null)
@@ -9,6 +9,8 @@ export default function App() {
   const [page, setPage] = useState(1) // 1..3
   const [cap, setCap] = useState('all') // 'all' | 'small' | 'mid' | 'large'
   const [hasMore, setHasMore] = useState(true)
+  const [manual, setManual] = useState({ ticker: '', exchange: 'NSE' })
+  const [manualResult, setManualResult] = useState(null)
 
   const loadPage = useCallback(async (pageToLoad, capVal) => {
     const data = await getTopRecommendations(3, pageToLoad, capVal)
@@ -111,6 +113,61 @@ export default function App() {
             </div>
           ))}
         </div>
+      </section>
+
+      <section style={{ marginTop: 16 }}>
+        <h3>Analyze a specific ticker</h3>
+        <div className="toolbar" style={{ flexWrap: 'wrap' }}>
+          <input
+            placeholder="e.g., RELIANCE or RELIANCE.NS"
+            value={manual.ticker}
+            onChange={(e) => setManual(m => ({ ...m, ticker: e.target.value }))}
+            style={{ background:'#0f1725', color:'#e5efff', border:'1px solid #1f2a44', borderRadius:8, padding:'8px 12px' }}
+          />
+          <select value={manual.exchange} onChange={(e)=> setManual(m=> ({...m, exchange: e.target.value}))}>
+            <option value="NSE">NSE</option>
+            <option value="BSE">BSE</option>
+          </select>
+          <button onClick={async ()=>{
+            if (!manual.ticker.trim()) return
+            setLoading(true)
+            setManualResult(null)
+            try{
+              const out = await getOneRecommendation(manual.ticker.trim(), manual.exchange)
+              setManualResult(out)
+            }catch(e){
+              setError(e.message || 'Failed to analyze ticker')
+            }finally{
+              setLoading(false)
+            }
+          }} disabled={loading}>Analyze</button>
+        </div>
+        {manualResult && (
+          <div className="card" style={{ marginTop: 8 }}>
+            {manualResult.recommendation ? (
+              <>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'baseline' }}>
+                  <h4 style={{ margin:'4px 0' }}>{manualResult.recommendation.ticker}</h4>
+                  {manualResult.recommendation.cap && <span className="badge">{manualResult.recommendation.cap.toUpperCase()}</span>}
+                </div>
+                <div className="kv">
+                  <span><b>Score:</b> {manualResult.recommendation.composite_score}</span>
+                  <span><b>Class:</b> {manualResult.recommendation.classification}</span>
+                  <span><b>Hold:</b> {manualResult.recommendation.holding_duration}</span>
+                  <span><b>Conf:</b> {manualResult.recommendation.confidence}</span>
+                </div>
+                <div className="hr" />
+                <p className="subtle">{manualResult.recommendation.rationale}</p>
+                <div className="kv">
+                  <div><b>Stop-loss:</b> {manualResult.recommendation.stop_loss}</div>
+                  <div><b>Targets:</b> {manualResult.recommendation.target_band?.join?.(' , ')}</div>
+                </div>
+              </>
+            ) : (
+              <p className="subtle">{manualResult.note || 'No data for this symbol.'}</p>
+            )}
+          </div>
+        )}
       </section>
 
       <footer className="footer">
