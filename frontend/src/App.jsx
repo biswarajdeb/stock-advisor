@@ -59,51 +59,52 @@ export default function App() {
   }
 
   return (
-    <div style={{ fontFamily: 'system-ui, Arial, sans-serif', padding: 16, maxWidth: 960, margin: '0 auto' }}>
-      <h1>Stock Advisor (Free)</h1>
-      <p style={{ color: '#555' }}>Demo MVP dashboard. Now supports Next 3 (up to 9) and market-cap filter.</p>
+    <div className="container">
+      <div className="header">
+        <h1 className="title">Stock Advisor (Free)</h1>
+        <span className="subtle">Demo: Next 3 (up to 9) + Cap filter</span>
+      </div>
 
-      <section style={{ marginTop: 16 }}>
+      <section style={{ marginTop: 12 }}>
         <h3>Backend Health</h3>
-        <pre style={{ background:'#f5f5f5', padding: 12, borderRadius: 8 }}>
+        <pre className="card" style={{ overflowX: 'auto' }}>
 {JSON.stringify(health, null, 2)}
         </pre>
       </section>
 
-      <section style={{ marginTop: 16 }}>
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap' }}>
-          <h3 style={{ margin: 0 }}>Top Recommendations</h3>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <label htmlFor="cap">Market Cap:</label>
-            <select id="cap" value={cap} onChange={(e) => setCap(e.target.value)}>
-              <option value="all">All</option>
-              <option value="large">Large Cap</option>
-              <option value="mid">Mid Cap</option>
-              <option value="small">Small Cap</option>
-            </select>
-            <button onClick={onNext3} disabled={page >= 3 || loading}>
-              Next 3
-            </button>
-          </div>
+      <section style={{ marginTop: 12 }}>
+        <div className="toolbar">
+          <label htmlFor="cap">Market Cap:</label>
+          <select id="cap" value={cap} onChange={(e) => setCap(e.target.value)} disabled={loading}>
+            <option value="all">All</option>
+            <option value="large">Large Cap</option>
+            <option value="mid">Mid Cap</option>
+            <option value="small">Small Cap</option>
+          </select>
+          <span className="page">Page {page}/3</span>
+          <button onClick={async () => { if (page>1){ setLoading(true); try{ setPage(p=>p-1); setRecs([]); await loadPage(page-1, cap); } finally { setLoading(false) } } }} disabled={page <= 1 || loading}>Previous</button>
+          <button onClick={onNext3} disabled={page >= 3 || loading}>Next 3</button>
+          <button onClick={async () => { setLoading(true); try{ setRecs([]); setPage(1); await loadPage(1, cap); } finally { setLoading(false) } }} disabled={loading}>Reset</button>
         </div>
-        {loading && <p>Loading...</p>}
+        {loading && <p className="subtle">Loading...</p>}
         {error && <p style={{ color: 'tomato' }}>{error}</p>}
-        {!loading && !error && recs.length === 0 && <p>No recommendations available.</p>}
-        <div style={{ display: 'grid', gap: 12 }}>
+        {!loading && !error && recs.length === 0 && <p className="subtle">No recommendations available.</p>}
+        <div className="grid">
           {recs.map((r) => (
-            <div key={r.ticker} style={{ border: '1px solid #ddd', borderRadius: 8, padding: 12 }}>
+            <div key={r.ticker} className="card">
               <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 }}>
                 <h4 style={{ margin: '4px 0' }}>{r.ticker}</h4>
-                {r.cap && <span style={{ fontSize: 12, color: '#666' }}>{r.cap?.toUpperCase?.()}</span>}
+                {r.cap && <span className="badge">{r.cap?.toUpperCase?.()}</span>}
               </div>
-              <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 14 }}>
+              <div className="kv">
                 <span><b>Score:</b> {r.composite_score}</span>
                 <span><b>Class:</b> {r.classification}</span>
                 <span><b>Hold:</b> {r.holding_duration}</span>
                 <span><b>Conf:</b> {r.confidence}</span>
               </div>
-              <p style={{ marginTop: 8 }}>{r.rationale}</p>
-              <div style={{ fontSize: 14 }}>
+              <div className="hr" />
+              <p style={{ marginTop: 8 }} className="subtle">{r.rationale}</p>
+              <div className="kv">
                 <div><b>Stop-loss:</b> {r.stop_loss?.toFixed?.(2) ?? r.stop_loss}</div>
                 <div><b>Targets:</b> {Array.isArray(r.target_band) ? r.target_band.join(' , ') : ''}</div>
               </div>
@@ -112,7 +113,7 @@ export default function App() {
         </div>
       </section>
 
-      <footer style={{ marginTop: 24, fontSize: 12, color: '#777' }}>
+      <footer className="footer">
         Disclaimer: This output is informational only; not financial advice.
       </footer>
     </div>
