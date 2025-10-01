@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timezone
 from typing import List, Dict, Any
+import os
 
 import math
 import time
@@ -39,7 +40,7 @@ def top_recommendations(n: int = 3, page: int = 1, cap: str = "all"):
     if cap not in {"small", "mid", "large", "all"}:
         cap = "all"
 
-    # Simple universes (Yahoo symbols with .NS)
+    # Universes: if cap=all, load NIFTY500 (from local CSV or env URL); otherwise fall back to small hardcoded lists
     UNIVERSE = {
         "large": ["RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS"],
         "mid":   ["CUMMINSIND.NS", "AIAENG.NS", "PIIND.NS", "AUROPHARMA.NS", "TATAELXSI.NS"],
@@ -48,8 +49,11 @@ def top_recommendations(n: int = 3, page: int = 1, cap: str = "all"):
 
     symbols: List[str] = []
     if cap == "all":
-        for v in UNIVERSE.values():
-            symbols.extend(v)
+        symbols = _load_nifty500_symbols()
+        if not symbols:
+            # fallback to combined small,mid,large if NIFTY500 not available
+            for v in UNIVERSE.values():
+                symbols.extend(v)
     else:
         symbols = UNIVERSE.get(cap, [])
 
@@ -61,7 +65,7 @@ def top_recommendations(n: int = 3, page: int = 1, cap: str = "all"):
         _CACHE = {"data": {}, "ts": 0}
 
     cache_key = f"{cap}"
-    cache_ttl = 300  # seconds
+    cache_ttl = 900 if cap == "all" else 300  # longer cache for large universe
     now_ts = time.time()
 
     if _CACHE["data"].get(cache_key) and now_ts - _CACHE["data"][cache_key]["ts"] < cache_ttl:
@@ -288,6 +292,70 @@ def _cap_for_symbol(sym: str) -> str:
     if sym in {"CUMMINSIND.NS", "AIAENG.NS", "PIIND.NS", "AUROPHARMA.NS", "TATAELXSI.NS"}:
         return "mid"
     return "small"
+
+
+def _load_nifty500_symbols() -> List[str]:
+    """
+    Load NIFTY 500 symbols (NSE) and append .NS for Yahoo. Priority:
+    1) Environment variable NIFTY500_URL (CSV with a column of tickers without suffix)
+    2) Local file backend/app/data/nifty500.csv
+    """
+    global _UNIVERSE_CACHE
+    try:
+        _UNIVERSE_CACHE
+    except NameError:
+        _UNIVERSE_CACHE = {"nifty500": None}
+
+    if _UNIVERSE_CACHE.get("nifty500"):
+        return _UNIVERSE_CACHE["nifty500"]
+
+    symbols: List[str] = []
+    url = os.getenv("NIFTY500_URL", "").strip()
+    try:
+        if url:
+            import csv, io, requests as _req
+            r = _req.get(url, timeout=15)
+            r.raise_for_status()
+            content = r.text
+            reader = csv.reader(io.StringIO(content))
+            for row in reader:
+                if not row:
+                    continue
+                raw = row[0].strip().upper()
+                if not raw or raw == "SYMBOL":
+                    continue
+                if raw.endswith(".NS"):
+                    symbols.append(raw)
+                else:
+                    symbols.append(f"{raw}.NS")
+    except Exception:
+        symbols = []
+
+    if not symbols:
+        # try local file
+        try:
+            import csv
+            file_path = os.path.join(os.path.dirname(__file__), "data", "nifty500.csv")
+            with open(file_path, "r", encoding="utf-8") as f:
+                reader = csv.reader(f)
+                for row in reader:
+                    if not row:
+                        continue
+                    raw = row[0].strip().upper()
+                    if not raw or raw == "SYMBOL":
+                        continue
+                    if raw.endswith(".NS"):
+                        symbols.append(raw)
+                    else:
+                        symbols.append(f"{raw}.NS")
+        except Exception:
+            pass
+
+    # de-dup and keep a reasonable cap to avoid hitting rate limits too hard in a single call
+    # pagination will chunk through the cached ranked list
+    symbols = list(dict.fromkeys(symbols))
+    _UNIVERSE_CACHE["nifty500"] = symbols
+    return symbols
 
 
 def _demo_pool(now_iso: str) -> List[Dict[str, Any]]:
