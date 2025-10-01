@@ -22,11 +22,8 @@ export default function App() {
       }
       return merged
     })
-    // determine if more pages available (up to 3 pages, or filtered total)
-    const total = data.total_available ?? items.length
-    const pageSize = data.page_size ?? 3
-    const maxPages = Math.min(3, Math.ceil(total / pageSize) || 1)
-    setHasMore(pageToLoad < maxPages)
+    // allow up to 3 pages regardless of backend totals for demo pagination
+    setHasMore(pageToLoad < 3)
   }, [])
 
   useEffect(() => {
@@ -84,7 +81,7 @@ export default function App() {
               <option value="mid">Mid Cap</option>
               <option value="small">Small Cap</option>
             </select>
-            <button onClick={onNext3} disabled={!hasMore || loading}>
+            <button onClick={onNext3} disabled={page >= 3 || loading}>
               Next 3
             </button>
           </div>
