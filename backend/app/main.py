@@ -67,7 +67,7 @@ def top_recommendations(n: int = 3, page: int = 1, cap: str = "all"):
     if _CACHE["data"].get(cache_key) and now_ts - _CACHE["data"][cache_key]["ts"] < cache_ttl:
         ranked = _CACHE["data"][cache_key]["items"]
     else:
-        ranked = _rank_symbols(symbols)
+        ranked = _rank_symbols(symbols, min_bars=30, allow_minimal=True)
         _CACHE["data"][cache_key] = {"items": ranked, "ts": now_ts}
 
     # Pagination (up to 3 pages of size n)
@@ -76,16 +76,7 @@ def top_recommendations(n: int = 3, page: int = 1, cap: str = "all"):
     start = (page - 1) * n
     end = start + n
     page_items = ranked[start:end]
-
-    # Fallback to demo pool if nothing fetched (e.g., rate-limited or wheel mismatch)
-    if len(ranked) == 0:
-        demo = _demo_pool(now)
-        # apply cap filter and pagination
-        demo_filtered = [d for d in demo if cap == "all" or d["cap"] == cap]
-        page_items = demo_filtered[start:end]
-        total = len(demo_filtered)
-    else:
-        total = len(ranked)
+    total = len(ranked)
 
     return {
         "timestamp": now,
@@ -119,14 +110,18 @@ def one_recommendation(ticker: str, exchange: str = "NSE"):
         else:
             sym = f"{sym}.NS"
 
-    ranked = _rank_symbols([sym])
+    ranked = _rank_symbols([sym], min_bars=20, allow_minimal=True)
     if ranked:
         return {"timestamp": now, "recommendation": ranked[0], "note": None}
 
-    # If no live data, provide a helpful note (frontend can surface this)
-    return {"timestamp": now, "recommendation": None, "note": "No data available for this symbol at the moment. Try later or check the symbol/exchange."}
+    # If no live data, provide a helpful note (live-only mode)
+    # As a last resort, try minimal quote-only snapshot
+    minimal = _minimal_from_quote(sym)
+    if minimal is not None:
+        return {"timestamp": now, "recommendation": minimal, "note": "Quote-only snapshot (limited data)."}
+    return {"timestamp": now, "recommendation": None, "note": "No live data available for this symbol at the moment. Try later or check the symbol/exchange."}
 
-def _rank_symbols(symbols: List[str]) -> List[Dict[str, Any]]:
+def _rank_symbols(symbols: List[str], min_bars: int = 60, allow_minimal: bool = False) -> List[Dict[str, Any]]:
     results = []
     # Use a shared session with a desktop User-Agent to reduce blocks
     session = requests.Session()
@@ -137,11 +132,15 @@ def _rank_symbols(symbols: List[str]) -> List[Dict[str, Any]]:
         try:
             df = None
             # Try multiple periods to increase chance of data
-            for period in ("1y", "6mo", "3mo"):
+            for period in ("2y", "1y", "6mo", "3mo"):
                 df = yf.download(sym, period=period, interval="1d", auto_adjust=True, progress=False, threads=False, session=session)
                 if df is not None and not df.empty:
                     break
-            if df is None or df.empty or len(df) < 60:
+            if df is None or df.empty or len(df) < min_bars:
+                if allow_minimal:
+                    m = _minimal_from_quote(sym)
+                    if m is not None:
+                        results.append(m)
                 continue
             df = df.rename(columns={"Open":"o","High":"h","Low":"l","Close":"c","Volume":"v"}).dropna()
 
@@ -193,6 +192,8 @@ def _rank_symbols(symbols: List[str]) -> List[Dict[str, Any]]:
                 classification = "Multi-Bagger"
             elif composite >= 70:
                 classification = "Short-Term Blast"
+            elif composite < 55:
+                classification = "Avoid"
 
             # Stop-loss and targets
             stop_loss = round(float(last.c - 1.8 * (atr if atr == atr else 0)), 2)
@@ -204,8 +205,14 @@ def _rank_symbols(symbols: List[str]) -> List[Dict[str, Any]]:
                 "cap": _cap_for_symbol(sym),
                 "composite_score": composite,
                 "classification": classification,
-                "holding_duration": "Short (1-30 days)" if classification == "Short-Term Blast" else ("Long (>12 months)" if classification == "Multi-Bagger" else "Medium (1-12 months)"),
-                "confidence": int(min(95, max(50, composite - (20 if math.isnan(atr) else 0)))),
+                "holding_duration": (
+                    "Short (1-30 days)" if classification == "Short-Term Blast" else (
+                        "Long (>12 months)" if classification == "Multi-Bagger" else (
+                            "N/A" if classification == "Avoid" else "Medium (1-12 months)"
+                        )
+                    )
+                ),
+                "confidence": int(max(10, min(90, composite - 25 + trend * 5))),
                 "rationale": "Live technical-only MVP: trend, RSI band, breakout/volume, volatility adjusted.",
                 "stop_loss": stop_loss,
                 "target_band": [target1, target2],
@@ -219,6 +226,51 @@ def _rank_symbols(symbols: List[str]) -> List[Dict[str, Any]]:
     # Sort by score desc and return up to 9
     results.sort(key=lambda x: x.get("composite_score", 0), reverse=True)
     return results[:9]
+
+
+def _minimal_from_quote(sym: str) -> Dict[str, Any] | None:
+    try:
+        tk = yf.Ticker(sym)
+        finfo = getattr(tk, 'fast_info', None)
+        price = None
+        prev = None
+        if finfo:
+            price = getattr(finfo, 'last_price', None) or getattr(finfo, 'lastPrice', None) or getattr(finfo, 'last_trade_price', None)
+            prev = getattr(finfo, 'previous_close', None) or getattr(finfo, 'previousClose', None)
+        if price is None:
+            hist = tk.history(period="5d", interval="1d", auto_adjust=True)
+            if hist is not None and not hist.empty:
+                price = float(hist['Close'].iloc[-1])
+                if len(hist) > 1:
+                    prev = float(hist['Close'].iloc[-2])
+        if price is None:
+            return None
+        change_pct = 0.0
+        if prev is not None and prev != 0:
+            change_pct = (price - prev) / prev
+        composite = max(10.0, 50.0 + change_pct * 100 * 0.5)  # modestly scale daily change
+        composite = round(float(min(100.0, max(0.0, composite))), 1)
+        classification = "Avoid" if composite < 55 else ("Neutral" if composite < 70 else "Short-Term Blast")
+        stop_loss = round(price * 0.95, 2)
+        target1 = round(price * 1.08, 2)
+        target2 = round(price * 1.15, 2)
+        trend_bonus = 0
+        confidence = int(max(10, min(85, 25 + trend_bonus * 5 + (composite - 50))))
+        return {
+            "ticker": sym.replace(".NS", "").replace(".BO", ""),
+            "cap": _cap_for_symbol(sym),
+            "composite_score": composite,
+            "classification": classification,
+            "holding_duration": "N/A" if classification == "Avoid" else "Medium (1-12 months)",
+            "confidence": confidence,
+            "rationale": "Quote-only snapshot: derived from last/prev close; limited indicators.",
+            "stop_loss": stop_loss,
+            "target_band": [target1, target2],
+            "evidence": ["yfinance:fast_info|history"],
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception:
+        return None
 
 
 def _rsi(series: pd.Series, period: int = 14) -> pd.Series:
